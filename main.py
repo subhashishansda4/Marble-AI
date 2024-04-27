@@ -2,9 +2,9 @@ import os
 from tqdm import tqdm
 
 import cv2
-from PIL import Image, ImageFilter
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -14,6 +14,16 @@ product_path = 'product_images'
 
 for images in tqdm(os.listdir(product_path)):
     product_image_path = os.path.join(product_path, images)
+    
+    # Loading and merging datasets
+    photos_df = pd.read_csv('photos.tsv000', sep='\t')
+    keywords_df = pd.read_csv('keywords.tsv000', sep='\t')
+    colors_df = pd.read_csv('colors.tsv000', sep='\t')
+    
+    merge_df = pd.merge(keywords_df, colors_df, on='photo_id', how='outer')
+    df = pd.merge(photos_df, merge_df, on='photo_id', how='outer')
+    df.to_csv('dataset/data.csv', index=False)
+    
     
     product_image = cv2.imread(product_image_path)
     
@@ -73,5 +83,3 @@ for images in tqdm(os.listdir(product_path)):
     plt.savefig(f'plots/{os.path.splitext(images)[0]}_colors.jpg')
     plt.show()
 
-
-print(hexcodes)
