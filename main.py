@@ -10,21 +10,28 @@ import matplotlib.patches as patches
 
 from sklearn.cluster import KMeans
 
+from tensorflow.keras.applications.mobilenet import MobileNet, preprocess_input, decode_predictions
+from tensorflow.keras.preprocessing import image
+
 product_path = 'product_images'
+
+
+# Loading and merging datasets
+photos_df = pd.read_csv('dataset/photos.tsv000', sep='\t')
+keywords_df = pd.read_csv('dataset/keywords.tsv000', sep='\t')
+colors_df = pd.read_csv('dataset/colors.tsv000', sep='\t')
+
+merge_df = pd.merge(keywords_df, colors_df, on='photo_id', how='outer')
+df = pd.merge(photos_df, merge_df, on='photo_id', how='outer')
+df.to_csv('dataset/data.csv', index=False)
+
+
+# Load pre-trained MobileNet model
+mobilenet_model = MobileNet(weights='imagenet')
+
 
 for images in tqdm(os.listdir(product_path)):
     product_image_path = os.path.join(product_path, images)
-    
-    # Loading and merging datasets
-    photos_df = pd.read_csv('photos.tsv000', sep='\t')
-    keywords_df = pd.read_csv('keywords.tsv000', sep='\t')
-    colors_df = pd.read_csv('colors.tsv000', sep='\t')
-    
-    merge_df = pd.merge(keywords_df, colors_df, on='photo_id', how='outer')
-    df = pd.merge(photos_df, merge_df, on='photo_id', how='outer')
-    df.to_csv('dataset/data.csv', index=False)
-    
-    
     product_image = cv2.imread(product_image_path)
     
     # Background removal
@@ -44,7 +51,7 @@ for images in tqdm(os.listdir(product_path)):
     
     plt.imshow(masked_image, cmap='gray', vmin=0, vmax=255)
     plt.axis('off')
-    plt.imsave('plots/mask_image.jpg', masked_image, cmap='gray')
+    plt.imsave(f'plots/{os.path.splitext(images)[0]}_mask.jpg', masked_image, cmap='gray')
     
     # Reshape the image to a 2D array of pixels
     pixels = masked_image.reshape((-1, 3))
@@ -82,4 +89,15 @@ for images in tqdm(os.listdir(product_path)):
     
     plt.savefig(f'plots/{os.path.splitext(images)[0]}_colors.jpg')
     plt.show()
-
+    
+    img = image.load_img(product_image_path, target_size=(224,224))
+    x = image.img_to_array(img)
+    x = np.expand_dims(x, axis=0)
+    x = preprocess_input(x.copy())
+    
+    # Predicting image category
+    preds = mobilenet_model.predict(x)
+    # Decoding predictions
+    decoded_preds = decode_predictions(preds, top=3)[0]
+    
+    tags = [label for (_, label, _) in decoded_preds]
