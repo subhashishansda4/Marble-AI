@@ -13,7 +13,6 @@ from sklearn.cluster import KMeans
 product_path = 'product_images'
 
 for images in tqdm(os.listdir(product_path)):
-    images = 'product1.jpg'
     product_image_path = os.path.join(product_path, images)
     
     product_image = cv2.imread(product_image_path)
