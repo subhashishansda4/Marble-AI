@@ -1,7 +1,11 @@
 import os
 from tqdm import tqdm
+from PIL import Image, ImageFilter
+from io import BytesIO
 
 import cv2
+import requests
+import random
 
 import numpy as np
 import pandas as pd
@@ -10,11 +14,12 @@ import matplotlib.patches as patches
 
 from sklearn.cluster import KMeans
 
-from tensorflow.keras.applications.mobilenet import MobileNet, preprocess_input, decode_predictions
+from tensorflow.keras.applications.mobilenet import preprocess_input
 from tensorflow.keras.preprocessing import image
 from scipy.spatial import distance
 
 product_path = 'product_images'
+download_path = 'download_images'
 
 
 # Loading and merging datasets
@@ -119,9 +124,8 @@ for images in tqdm(os.listdir(product_path)):
     
     hexcodes = [''.join(c.upper() if c.isalpha() else c for c in s.lstrip('#')) for s in hexcodes]
 
-    
 
-filtered_image_urls = []
+image_urls = []
 
 # Convert hexcodes to RGB values
 target_rgb_values = []
@@ -159,4 +163,36 @@ for index, row in df_.iterrows():
             ratios.append(contrast_ratio(target_rgb, rgb_value))
         
         if any(distance <= 5 for distance in distances) and any(ratio > 4.5 for ratio in ratios):  # Set your distance threshold
-            filtered_image_urls.append(row['photo_image_url'])
+            image_urls.append(row['photo_image_url'])
+            
+# Download images
+temp_path = os.path.join(download_path, os.path.splitext(images)[0])
+os.makedirs(temp_path, exist_ok=True)
+
+# Download only 10 random images for each product image
+i = 0
+blur_radius = 30
+
+for image_url in random.sample(image_urls, min(10, len(image_urls))):
+    i += 1
+    response = requests.get(image_url)
+    if response.status_code == 200:
+        # Save the image
+        with open(os.path.join(temp_path, str(i)) + '.jpg', 'wb') as f:
+            f.write(response.content)
+        
+        # Generating product shots
+        background_image = Image.open(BytesIO(response.content))
+        # Resize product image to fit background
+        product_resize = cv2.resize(product_image, (background_image.width, background_image.height))
+        
+        # Convert product image to RGBA (add alpha channel)
+        product_rgba = cv2.cvtColor(product_resize, cv2.COLOR_BGR2RGBA)
+        # Convert product image to PIL format
+        product_pil = Image.fromarray(product_rgba)
+        # Apply Gaussian blur to background
+        blurred_background = background_image.filter(ImageFilter.GaussianBlur(blur_radius))
+        
+        # Blend product with blurred background
+        product_shot = Image.alpha_composite(blurred_background.convert('RGBA'), product_pil)
+    
