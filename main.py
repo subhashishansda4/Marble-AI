@@ -12,6 +12,7 @@ from sklearn.cluster import KMeans
 
 from tensorflow.keras.applications.mobilenet import MobileNet, preprocess_input, decode_predictions
 from tensorflow.keras.preprocessing import image
+from scipy.spatial import distance
 
 product_path = 'product_images'
 
@@ -25,9 +26,22 @@ merge_df = pd.merge(keywords_df, colors_df, on='photo_id', how='outer')
 df = pd.merge(photos_df, merge_df, on='photo_id', how='outer')
 df.to_csv('dataset/data.csv', index=False)
 
+df = pd.read_csv('dataset/data.csv')
 
+df_ = df.sample(1000000)
+# Dropping columns
+drop_cls = ['photo_id', 'photo_url', 'photo_submitted_at', 'photo_featured', 'photographer_username', 'photographer_first_name', 'photographer_last_name', 'exif_camera_make', 'exif_camera_model', 'exif_iso', 'exif_aperture_value', 'exif_focal_length', 'exif_exposure_time', 'photo_location_name', 'photo_location_latitude', 'photo_location_longitude', 'photo_location_country', 'photo_location_city', 'ai_primary_landmark_name', 'ai_primary_landmark_latitude', 'ai_primary_landmark_longitude', 'ai_primary_landmark_confidence', 'blur_hash', 'ai_service_1_confidence', 'ai_service_2_confidence', 'suggested_by_user', 'ai_coverage', 'ai_score']
+df_ = df_.drop(columns=drop_cls)
+# Comining keyword columns
+df_['keywords'] = df_[['photo_description', 'ai_description', 'keyword_x', 'keyword_y']].apply(lambda x: ' '.join(x.dropna()), axis=1)
+df_ = df_.drop(columns=['photo_description', 'ai_description', 'keyword_x', 'keyword_y'])
+
+
+'''
 # Load pre-trained MobileNet model
 mobilenet_model = MobileNet(weights='imagenet')
+'''
+tags = ['background']
 
 
 for images in tqdm(os.listdir(product_path)):
@@ -95,9 +109,54 @@ for images in tqdm(os.listdir(product_path)):
     x = np.expand_dims(x, axis=0)
     x = preprocess_input(x.copy())
     
+    '''
     # Predicting image category
     preds = mobilenet_model.predict(x)
     # Decoding predictions
-    decoded_preds = decode_predictions(preds, top=3)[0]
-    
+    decoded_preds = decode_predictions(preds, top=10)[0]
     tags = [label for (_, label, _) in decoded_preds]
+    '''
+    
+    hexcodes = [''.join(c.upper() if c.isalpha() else c for c in s.lstrip('#')) for s in hexcodes]
+
+    
+
+filtered_image_urls = []
+
+# Convert hexcodes to RGB values
+target_rgb_values = []
+for hexcode in hexcodes:
+    rgb_value = tuple(int(hexcode[i:i+2], 16) for i in (0, 2, 4))
+    target_rgb_values.append(rgb_value)
+
+# Function to calculate contrast ratio between two colors
+def contrast_ratio(color1, color2):
+    luminance1 = 0.2126 * color1[0] + 0.7152 * color1[1] + 0.0722 * color1[2]
+    luminance2 = 0.2126 * color2[0] + 0.7152 * color2[1] + 0.0722 * color2[2]
+    if luminance1 > luminance2:
+        return (luminance1 + 0.05) / (luminance2 + 0.05)
+    else:
+        return (luminance2 + 0.05) / (luminance1 + 0.05)
+
+# Iterate over each image URL
+for index, row in df_.iterrows():
+    ratios = []
+    
+    # Extract the RGB values from the DataFrame
+    rgb_value = (row['red'], row['green'], row['blue'])
+    
+    # Calculate Euclidean distance between image RGB values and target RGB values
+    distances = [distance.euclidean(target_rgb, rgb_value) for target_rgb in target_rgb_values if not np.isnan(rgb_value).any() and not np.isnan(target_rgb).any()]
+    
+    # Check if any tag matches the target tags
+    if any(tag in row['keywords'] for tag in tags):
+        # Calculate contrast ratio between RGB value and target colors
+
+        for target_rgb in target_rgb_values:
+            # Check for NaN values and skip if present
+            if np.isnan(rgb_value).any() or np.isnan(target_rgb).any():
+                continue
+            ratios.append(contrast_ratio(target_rgb, rgb_value))
+        
+        if any(distance <= 5 for distance in distances) and any(ratio > 4.5 for ratio in ratios):  # Set your distance threshold
+            filtered_image_urls.append(row['photo_image_url'])
