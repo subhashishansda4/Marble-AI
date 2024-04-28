@@ -2,7 +2,6 @@ import os
 from tqdm import tqdm
 from PIL import Image, ImageFilter
 from io import BytesIO
-from rembg import remove
 
 import cv2
 import requests
@@ -52,9 +51,9 @@ tags = ['background']
 
 
 for images in tqdm(os.listdir(product_path)):
-    images = 'product2.jpg'
     product_image_path = os.path.join(product_path, images)
     product_image = cv2.imread(product_image_path)
+    print(image, '\n')
     
     # Background removal
     gray = cv2.cvtColor(product_image, cv2.COLOR_BGR2GRAY)
@@ -74,7 +73,7 @@ for images in tqdm(os.listdir(product_path)):
     
     plt.imshow(masked_image, cmap='gray', vmin=0, vmax=255)
     plt.axis('off')
-    plt.imsave(f'plots/{os.path.splitext(images)[0]}_mask.jpg', masked_image, cmap='gray')
+    plt.imsave(f'plots/{os.path.splitext(images)[0]}_mask.jpg', masked_image)
     
     # Reshape the image to a 2D array of pixels
     pixels = masked_image.reshape((-1, 3))
@@ -130,104 +129,141 @@ for images in tqdm(os.listdir(product_path)):
 
 
 
-
-
-
-image_urls = []
-
-# Convert hexcodes to RGB values
-target_rgb_values = []
-for hexcode in hexcodes:
-    rgb_value = tuple(int(hexcode[i:i+2], 16) for i in (0, 2, 4))
-    target_rgb_values.append(rgb_value)
-
-# Function to calculate contrast ratio between two colors
-def contrast_ratio(color1, color2):
-    luminance1 = 0.2126 * color1[0] + 0.7152 * color1[1] + 0.0722 * color1[2]
-    luminance2 = 0.2126 * color2[0] + 0.7152 * color2[1] + 0.0722 * color2[2]
-    if luminance1 > luminance2:
-        return (luminance1 + 0.05) / (luminance2 + 0.05)
-    else:
-        return (luminance2 + 0.05) / (luminance1 + 0.05)
-
-# Iterate over each image URL
-for index, row in df_.iterrows():
-    ratios = []
+    '''
+    # Removing shadows
+    lab_img = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    # Extract lightness channel
+    lightness, a, b = cv2.split(lab_img)
+    # Apply bilateral filtering to preserve edges while smoothing shadows
+    bilateral_filtered = cv2.bilateralFilter(lightness, 9, 75, 75)
     
-    # Extract the RGB values from the DataFrame
-    rgb_value = (row['red'], row['green'], row['blue'])
+    # Check and potentially resize for consistent size
+    if bilateral_filtered.shape != a.shape:
+        bilateral_filtered = cv2.resize(bilateral_filtered, dsize=a.shape)
     
-    # Calculate Euclidean distance between image RGB values and target RGB values
-    distances = [distance.euclidean(target_rgb, rgb_value) for target_rgb in target_rgb_values if not np.isnan(rgb_value).any() and not np.isnan(target_rgb).any()]
+    # Verify and potentially convert data types
+    if bilateral_filtered.dtype != a.dtype:
+        bilateral_filtered = cv2.convertScaleAbs(bilateral_filtered, alpha=1.0, beta=0.0)
     
-    # Check if any tag matches the target tags
-    if any(tag in row['keywords'] for tag in tags):
-        # Calculate contrast ratio between RGB value and target colors
-
-        for target_rgb in target_rgb_values:
-            # Check for NaN values and skip if present
-            if np.isnan(rgb_value).any() or np.isnan(target_rgb).any():
-                continue
-            ratios.append(contrast_ratio(target_rgb, rgb_value))
-        
-        if any(distance <= 5 for distance in distances) and any(ratio > 4.5 for ratio in ratios):  # Set your distance threshold
-            image_urls.append(row['photo_image_url'])
-            
-# Download images
-temp_path = os.path.join(download_path, os.path.splitext(images)[0])
-os.makedirs(temp_path, exist_ok=True)
-
-# Download only 10 random images for each product image
-i = 0
-blur_radius = 10
-
-for image_url in random.sample(image_urls, min(10, len(image_urls))):
-    i += 1
-    response = requests.get(image_url)
-    if response.status_code == 200:
-        # Save the image
-        with open(os.path.join(temp_path, str(i)) + '.jpg', 'wb') as f:
-            f.write(response.content)
-        
-        # Generating product shots
-        foreground_image = Image.open(image_).convert('RGBA')
-        foreground_image.save("_.png", "PNG")
-        
-        background_image = Image.open(BytesIO(response.content))
-        
-        # Calculate the aspect ratio of the product and background images
-        product_aspect_ratio = foreground_image.width / foreground_image.height
-        background_aspect_ratio = background_image.width / background_image.height
-        # Resize the product image to fit within the dimensions of the background image while preserving aspect ratio
-        if product_aspect_ratio > background_aspect_ratio:
-            # Product image is wider than background image
-            new_width = background_image.width
-            new_height = int(new_width / product_aspect_ratio)
+    # Merge back wiith original a* and b* channels
+    lab_img = cv2.merge((bilateral_filtered, a, b))
+    # Convert back to BGR color space
+    img_ = cv2.cvtColor(lab_img, cv2.COLOR_LAB2BGR)
+    cv2.imwrite('_.png', img_)
+    '''
+    
+    # Removing background
+    product_image_bgra = cv2.cvtColor(product_image, cv2.COLOR_BGR2BGRA)
+    # Create nask
+    mask_ = cv2.inRange(product_image_bgra, (220, 220, 220, 220), (255, 255, 255, 255))
+    # Invert mask
+    mask_ = cv2.bitwise_not(mask_)
+    # remove white
+    image_ = cv2.bitwise_and(product_image_bgra, product_image_bgra, mask=mask_)
+    image_ = cv2.cvtColor(image_, cv2.COLOR_BGR2RGBA)
+    
+    print(f'background removed for {images}', '\n')
+    
+    
+    
+    image_urls = []
+    
+    # Convert hexcodes to RGB values
+    target_rgb_values = []
+    for hexcode in hexcodes:
+        rgb_value = tuple(int(hexcode[i:i+2], 16) for i in (0, 2, 4))
+        target_rgb_values.append(rgb_value)
+    
+    # Function to calculate contrast ratio between two colors
+    def contrast_ratio(color1, color2):
+        luminance1 = 0.2126 * color1[0] + 0.7152 * color1[1] + 0.0722 * color1[2]
+        luminance2 = 0.2126 * color2[0] + 0.7152 * color2[1] + 0.0722 * color2[2]
+        if luminance1 > luminance2:
+            return (luminance1 + 0.05) / (luminance2 + 0.05)
         else:
-            # Product image is taller than or equal to the background image
-            new_height = background_image.height
-            new_width = int(new_height * product_aspect_ratio)
+            return (luminance2 + 0.05) / (luminance1 + 0.05)
+    
+    # Iterate over each image URL
+    for index, row in df_.iterrows():
+        ratios = []
+        
+        # Extract the RGB values from the DataFrame
+        rgb_value = (row['red'], row['green'], row['blue'])
+        
+        # Calculate Euclidean distance between image RGB values and target RGB values
+        distances = [distance.euclidean(target_rgb, rgb_value) for target_rgb in target_rgb_values if not np.isnan(rgb_value).any() and not np.isnan(target_rgb).any()]
+        
+        # Check if any tag matches the target tags
+        if any(tag in row['keywords'] for tag in tags):
+            # Calculate contrast ratio between RGB value and target colors
+    
+            for target_rgb in target_rgb_values:
+                # Check for NaN values and skip if present
+                if np.isnan(rgb_value).any() or np.isnan(target_rgb).any():
+                    continue
+                ratios.append(contrast_ratio(target_rgb, rgb_value))
             
-        foreground_image = foreground_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Create a new image with the dimensions of the background image
-        composite_image = Image.new('RGBA', background_image.size, (255, 255, 255, 0))
-        
-        # Calculate the position to paste the product image onto the composite image to center it
-        offset = ((background_image.width - new_width) // 2, (background_image.height - new_height) // 2)
-        
-        # Paste the product image onto the composite image
-        composite_image.paste(foreground_image, offset, mask=foreground_image.split()[3])
-        
-        # Apply Gaussian blur to the background
-        blurred_background = background_image.filter(ImageFilter.GaussianBlur(blur_radius))
-        
-        # Blend the composite image with the blurred background
-        final_image = Image.alpha_composite(blurred_background.convert('RGBA'), composite_image)
+            if any(distance <= 8 for distance in distances) and any(ratio > 3.5 for ratio in ratios):  # Set your distance threshold
+                image_urls.append(row['photo_image_url'])
+                
+    # Download images
+    temp_path_1 = os.path.join(download_path, os.path.splitext(images)[0])
+    temp_path_2 = os.path.join(final_path, os.path.splitext(images)[0])
+    os.makedirs(temp_path_1, exist_ok=True)
+    os.makedirs(temp_path_2, exist_ok=True)
     
+    print(f'downloading images for {images}', '\n')
     
+    # Download only 10 random images for each product image
+    i = 0
+    blur_radius = 7.5
     
+    for image_url in random.sample(image_urls, min(20, len(image_urls))):
+        i += 1
+        response = requests.get(image_url)
+        if response.status_code == 200:
+            # Save the image
+            with open(os.path.join(temp_path_1, str(i)) + '.jpg', 'wb') as f:
+                f.write(response.content)
+            
+            # Generating product shots
+            foreground_image = Image.fromarray(image_)
+            foreground_image.save("_.png", "PNG")
+            
+            background_image = Image.open(BytesIO(response.content))
+            
+            # Calculate the aspect ratio of the product and background images
+            product_aspect_ratio = foreground_image.width / foreground_image.height
+            background_aspect_ratio = background_image.width / background_image.height
+            # Resize the product image to fit within the dimensions of the background image while preserving aspect ratio
+            if product_aspect_ratio > background_aspect_ratio:
+                # Product image is wider than background image
+                new_width = background_image.width
+                new_height = int(new_width / product_aspect_ratio)
+            else:
+                # Product image is taller than or equal to the background image
+                new_height = background_image.height
+                new_width = int(new_height * product_aspect_ratio)
+                
+            foreground_image = foreground_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Create a new image with the dimensions of the background image
+            composite_image = Image.new('RGBA', background_image.size, (255, 255, 255, 0))
+            
+            # Calculate the position to paste the product image onto the composite image to center it
+            offset = ((background_image.width - new_width) // 2, (background_image.height - new_height) // 2)
+            
+            # Paste the product image onto the composite image
+            composite_image.paste(foreground_image, offset, mask=foreground_image.split()[3])
+            
+            # Apply Gaussian blur to the background
+            blurred_background = background_image.filter(ImageFilter.GaussianBlur(blur_radius))
+            
+            # Blend the composite image with the blurred background
+            final_image = Image.alpha_composite(blurred_background.convert('RGBA'), composite_image)
         
         
-        path_ = os.path.join(final_path, os.path.splitext(images)[0] + f'_final{i}.png')
-        final_image.save(path_)
+        
+            
+            path_ = os.path.join(temp_path_2, str(i)) + '.png'
+            final_image.save(path_)
