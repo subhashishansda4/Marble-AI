@@ -2,6 +2,7 @@ import os
 from tqdm import tqdm
 from PIL import Image, ImageFilter
 from io import BytesIO
+from rembg import remove
 
 import cv2
 import requests
@@ -20,6 +21,7 @@ from scipy.spatial import distance
 
 product_path = 'product_images'
 download_path = 'download_images'
+final_path = 'final_shots'
 
 
 # Loading and merging datasets
@@ -50,6 +52,7 @@ tags = ['background']
 
 
 for images in tqdm(os.listdir(product_path)):
+    images = 'product2.jpg'
     product_image_path = os.path.join(product_path, images)
     product_image = cv2.imread(product_image_path)
     
@@ -67,6 +70,7 @@ for images in tqdm(os.listdir(product_path)):
     
     # Masking out
     masked_image = cv2.bitwise_and(product_image, res_mask_rgb)
+    masked_image = cv2.cvtColor(masked_image, cv2.COLOR_BGR2RGB)
     
     plt.imshow(masked_image, cmap='gray', vmin=0, vmax=255)
     plt.axis('off')
@@ -95,14 +99,14 @@ for images in tqdm(os.listdir(product_path)):
     
     for i in range(1, 4):
         cluster_center = kmeans.cluster_centers_[sort_ix[i]]
-        facecolor = '#%02x%02x%02x' % (int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))
+        facecolor = '#%02x%02x%02x' % (int(cluster_center[0]), int(cluster_center[1]), int(cluster_center[2]))
         ax.add_patch(patches.Rectangle((x_from, 0.05), rectangle_width, 0.9, alpha=None, facecolor=facecolor))
         x_from = x_from + rectangle_width + gap
         hexcodes.append(facecolor)
     
     # Plot the last rectangle (adjusted to fit within the plot boundaries)
     cluster_center = kmeans.cluster_centers_[sort_ix[4]]
-    facecolor = '#%02x%02x%02x' % (int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))
+    facecolor = '#%02x%02x%02x' % (int(cluster_center[0]), int(cluster_center[1]), int(cluster_center[2]))
     ax.add_patch(patches.Rectangle((x_from, 0.05), 1 - x_from - gap, 0.9, alpha=None, facecolor=facecolor))
     hexcodes.append(facecolor)
     
@@ -123,6 +127,10 @@ for images in tqdm(os.listdir(product_path)):
     '''
     
     hexcodes = [''.join(c.upper() if c.isalpha() else c for c in s.lstrip('#')) for s in hexcodes]
+
+
+
+
 
 
 image_urls = []
@@ -171,7 +179,7 @@ os.makedirs(temp_path, exist_ok=True)
 
 # Download only 10 random images for each product image
 i = 0
-blur_radius = 30
+blur_radius = 10
 
 for image_url in random.sample(image_urls, min(10, len(image_urls))):
     i += 1
@@ -182,17 +190,44 @@ for image_url in random.sample(image_urls, min(10, len(image_urls))):
             f.write(response.content)
         
         # Generating product shots
-        background_image = Image.open(BytesIO(response.content))
-        # Resize product image to fit background
-        product_resize = cv2.resize(product_image, (background_image.width, background_image.height))
+        foreground_image = Image.open(image_).convert('RGBA')
+        foreground_image.save("_.png", "PNG")
         
-        # Convert product image to RGBA (add alpha channel)
-        product_rgba = cv2.cvtColor(product_resize, cv2.COLOR_BGR2RGBA)
-        # Convert product image to PIL format
-        product_pil = Image.fromarray(product_rgba)
-        # Apply Gaussian blur to background
+        background_image = Image.open(BytesIO(response.content))
+        
+        # Calculate the aspect ratio of the product and background images
+        product_aspect_ratio = foreground_image.width / foreground_image.height
+        background_aspect_ratio = background_image.width / background_image.height
+        # Resize the product image to fit within the dimensions of the background image while preserving aspect ratio
+        if product_aspect_ratio > background_aspect_ratio:
+            # Product image is wider than background image
+            new_width = background_image.width
+            new_height = int(new_width / product_aspect_ratio)
+        else:
+            # Product image is taller than or equal to the background image
+            new_height = background_image.height
+            new_width = int(new_height * product_aspect_ratio)
+            
+        foreground_image = foreground_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create a new image with the dimensions of the background image
+        composite_image = Image.new('RGBA', background_image.size, (255, 255, 255, 0))
+        
+        # Calculate the position to paste the product image onto the composite image to center it
+        offset = ((background_image.width - new_width) // 2, (background_image.height - new_height) // 2)
+        
+        # Paste the product image onto the composite image
+        composite_image.paste(foreground_image, offset, mask=foreground_image.split()[3])
+        
+        # Apply Gaussian blur to the background
         blurred_background = background_image.filter(ImageFilter.GaussianBlur(blur_radius))
         
-        # Blend product with blurred background
-        product_shot = Image.alpha_composite(blurred_background.convert('RGBA'), product_pil)
+        # Blend the composite image with the blurred background
+        final_image = Image.alpha_composite(blurred_background.convert('RGBA'), composite_image)
     
+    
+    
+        
+        
+        path_ = os.path.join(final_path, os.path.splitext(images)[0] + f'_final{i}.png')
+        final_image.save(path_)
